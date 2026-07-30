@@ -25,7 +25,7 @@ from typing import Any, Iterable
 
 PROGRAM = "yay-llm-review"
 VERSION = "0.1.1"
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 RISK_ORDER = {"safe": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 VALID_RISKS = set(RISK_ORDER) | {"uncertain"}
 VALID_ACTIONS = {"allow", "inspect", "block"}
@@ -93,6 +93,8 @@ Classification rules:
   evidence. Do not cite them or infer risk from their mention of prompt injection.
 - If there is no concrete finding based on supplied package-file content, return
   risk_level=safe, recommended_action=allow, and findings=[].
+- Return one complete JSON object with no Markdown or extra text. Use valid JSON
+  escaping for quotes, backslashes, and newlines in every string value.
 
 Return only JSON matching the schema."""
 
@@ -775,7 +777,11 @@ def parse_json_content(content: str) -> dict[str, Any]:
         try:
             value = json.loads(text[start : end + 1])
         except json.JSONDecodeError as error:
-            raise ReviewError(f"invalid JSON returned by model: {error}") from error
+            candidate = text[start : end + 1]
+            beginning = max(0, error.pos - 160)
+            ending = min(len(candidate), error.pos + 160)
+            context = repr(candidate[beginning:ending])
+            raise ReviewError(f"invalid JSON returned by model: {error}; near {context}") from error
     if not isinstance(value, dict):
         raise ReviewError("model returned JSON that is not an object")
     return value

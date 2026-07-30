@@ -56,6 +56,10 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(module.ReviewError, "incomplete JSON.*starts.*ends"):
             module.parse_json_content('{"risk_level": "high"')
 
+    def test_invalid_model_json_error_includes_error_context(self) -> None:
+        with self.assertRaisesRegex(module.ReviewError, "invalid JSON returned.*near"):
+            module.parse_json_content('{"summary": "unescaped " quote"}')
+
     def test_response_finish_reason(self) -> None:
         self.assertEqual(
             module.response_finish_reason({"choices": [{"finish_reason": "length"}]}),
@@ -70,6 +74,8 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("A non-safe risk level requires at least one finding", module.SYSTEM_PROMPT)
         self.assertIn("System instructions and interpretation notes", module.SYSTEM_PROMPT)
         self.assertIn("evidence. Do not cite them", module.SYSTEM_PROMPT)
+        self.assertIn("valid JSON", module.SYSTEM_PROMPT)
+        self.assertIn("escaping for quotes, backslashes, and newlines", module.SYSTEM_PROMPT)
 
     def test_status_threshold(self) -> None:
         config = module.merge_config({"block_threshold": "high"})
