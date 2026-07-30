@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LLM-assisted security review hook for yay AUR packages."""
+"""LLM-assisted security review companion for yay AUR packages."""
 
 from __future__ import annotations
 

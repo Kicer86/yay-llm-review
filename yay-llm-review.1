@@ -1,6 +1,6 @@
 .TH YAY-LLM-REVIEW 1 "July 2026" "yay-llm-review 0.1.0" "User Commands"
 .SH NAME
-yay-llm-review \- LLM-assisted AUR recipe review hook for yay
+yay-llm-review \- LLM-assisted AUR recipe review companion for yay
 .SH SYNOPSIS
 .B yay-llm-review
 .IR init | deinit | status
@@ -8,9 +8,11 @@ yay-llm-review \- LLM-assisted AUR recipe review hook for yay
 .B yay-llm-review scan
 .RI [ options ] " package-directory"
 .SH DESCRIPTION
-Installs an opt-in per-user loader for a yay 13 AURPreInstall Lua hook and
+Provides an opt-in per-user loader for a yay 13 AURPreInstall Lua hook and
 reviews AUR repository files through an OpenAI-compatible llama.cpp server.
-The system package itself never modifies user home directories.
+It can also manually review an existing AUR checkout. The project is maintained
+independently of Arch Linux packaging; an optional Arch package is available
+from the AUR. It never modifies user home directories during installation.
 .SH COMMANDS
 .TP
 .B init

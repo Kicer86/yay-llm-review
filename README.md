@@ -1,8 +1,12 @@
 # yay-llm-review
 
-`yay-llm-review` adds an opt-in `AURPreInstall` Lua hook to yay 13. The hook
-sends the checked-out AUR recipe to an OpenAI-compatible `llama.cpp` server
-before source downloads and builds begin.
+`yay-llm-review` is an opt-in security-review companion for yay 13. It
+integrates through an `AURPreInstall` Lua hook that sends the checked-out AUR
+recipe to an OpenAI-compatible `llama.cpp` server before source downloads and
+builds begin. It can also manually review an existing AUR checkout.
+
+The project is maintained independently of Arch Linux packaging. An optional
+Arch package is available in the [AUR](https://aur.archlinux.org/packages/yay-llm-review).
 
 It reviews:
 
@@ -15,14 +19,14 @@ Package contents are explicitly framed as untrusted data in the model prompt.
 This reduces, but cannot eliminate, prompt-injection and model errors. Keep
 `yay`'s normal diff review enabled.
 
-## Build and install
+## Install
 
 ```sh
-makepkg -si
+yay -S yay-llm-review
 ```
 
-The package does not modify any user's home directory. Initialize it as the
-user who runs yay:
+The installed program does not modify any user's home directory during
+installation. Initialize it as the user who runs yay:
 
 ```sh
 yay-llm-review init
