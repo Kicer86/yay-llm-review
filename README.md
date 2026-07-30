@@ -121,6 +121,9 @@ on_error = "warn"
 After observing the selected model's false-positive rate, changing the block
 threshold to `high` is reasonable.
 
+Successful reviews are shown by default. Set `quiet_allow = true` to suppress
+`ALLOW` output for packages with no detected risk.
+
 ## Disable or remove the loader
 
 Set `enabled = false`, or remove only the managed loader block:

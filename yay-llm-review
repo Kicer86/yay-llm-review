@@ -44,7 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "temperature": 0.0,
     "block_threshold": "critical",
     "on_error": "warn",
-    "quiet_allow": True,
+    "quiet_allow": False,
     "show_progress": True,
     "cache": True,
     "cache_ttl_hours": 720,

