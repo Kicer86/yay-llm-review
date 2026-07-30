@@ -63,6 +63,14 @@ class ReviewTests(unittest.TestCase):
         )
         self.assertIsNone(module.response_finish_reason({"choices": [{}]}))
 
+    def test_system_prompt_defines_safe_and_low_risk_levels(self) -> None:
+        self.assertIn("safe: no concrete suspicious behavior", module.SYSTEM_PROMPT)
+        self.assertIn("low: a concrete, minor, review-worthy concern", module.SYSTEM_PROMPT)
+        self.assertIn("Never create a finding just to explain why code is safe", module.SYSTEM_PROMPT)
+        self.assertIn("A non-safe risk level requires at least one finding", module.SYSTEM_PROMPT)
+        self.assertIn("System instructions and interpretation notes", module.SYSTEM_PROMPT)
+        self.assertIn("evidence. Do not cite them", module.SYSTEM_PROMPT)
+
     def test_status_threshold(self) -> None:
         config = module.merge_config({"block_threshold": "high"})
         base = {
@@ -110,7 +118,7 @@ class ReviewTests(unittest.TestCase):
     def test_model_diagnostics_check_benign_and_suspicious_recipes(self) -> None:
         config = module.merge_config({"model": "test-model"})
         benign_review = {
-            "risk_level": "low",
+            "risk_level": "safe",
             "confidence": 0.9,
             "summary": "Normal package build.",
             "recommended_action": "allow",
@@ -147,6 +155,21 @@ class ReviewTests(unittest.TestCase):
 
         self.assertTrue(results[0].passed)
         self.assertFalse(all(result.passed for result in results[1:]))
+
+    def test_model_diagnostics_reject_low_risk_benign_recipe(self) -> None:
+        config = module.merge_config({"model": "test-model"})
+        low_review = {
+            "risk_level": "low",
+            "confidence": 0.9,
+            "summary": "Minor concern.",
+            "recommended_action": "allow",
+            "findings": [],
+        }
+
+        with patch.object(module, "call_model", return_value=low_review):
+            results = module.run_model_diagnostics(config)
+
+        self.assertFalse(results[0].passed)
 
     def test_test_command_accepts_verbose(self) -> None:
         args = module.build_parser().parse_args(["test", "--verbose"])

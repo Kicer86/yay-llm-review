@@ -28,7 +28,7 @@ Show effective paths and basic configuration.
 .B test
 Test the configured llama.cpp server with built-in AUR recipe scenarios. It
 checks that the server returns a valid review, allows one benign recipe with a
-safe or low risk level, and flags three suspicious recipes: download-and-execute,
+safe risk level, and flags three suspicious recipes: download-and-execute,
 disabled checksums, and credential access. It reports each scenario before
 sending the request. A suspicious scenario passes for any non-safe risk level,
 because the hook warns or blocks on non-safe results regardless of the model's

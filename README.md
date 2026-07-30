@@ -79,7 +79,7 @@ yay-llm-review test --verbose
 
 The suite sends one benign recipe and three intentionally suspicious recipes
 (download-and-execute, disabled checksums, and credential access). A scenario
-passes only when the benign recipe is allowed with a `safe` or `low` risk level,
+passes only when the benign recipe is returned as `safe` with an `allow` action,
 or when a suspicious recipe is returned as non-safe. This matches the hook,
 which warns or blocks on every non-safe risk level regardless of the model's
 recommended action. The command reports each scenario before it sends the
@@ -106,6 +106,10 @@ The model returns one of `safe`, `low`, `medium`, `high`, `critical`, or
 `uncertain`. Every non-safe result is displayed. `block_threshold` controls
 which risk level aborts yay; the default is `critical`. `uncertain` always
 warns. `on_error` controls whether transport and response errors warn or block.
+
+The review prompt reserves `safe` for recipes with no concrete concern and an
+empty findings list. `low` requires a specific, minor concern; normal operations
+such as installing files under `$pkgdir` must not be reported as findings.
 
 A conservative starting point is:
 

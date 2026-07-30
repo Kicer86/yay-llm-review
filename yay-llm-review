@@ -25,7 +25,7 @@ from typing import Any, Iterable
 
 PROGRAM = "yay-llm-review"
 VERSION = "0.1.1"
-PROMPT_VERSION = 1
+PROMPT_VERSION = 3
 RISK_ORDER = {"safe": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 VALID_RISKS = set(RISK_ORDER) | {"uncertain"}
 VALID_ACTIONS = {"allow", "inspect", "block"}
@@ -74,7 +74,27 @@ check(), package(), package installation, upgrade, or removal. Focus especially 
 Distinguish normal Arch packaging operations from actual risk. A package may
 legitimately install files into $pkgdir/usr or $pkgdir/etc; do not confuse those
 staged paths with writes to the live system. Explain concrete evidence and avoid
-claiming malicious intent without evidence. Return only JSON matching the schema."""
+claiming malicious intent without evidence.
+
+Classification rules:
+- safe: no concrete suspicious behavior. Use recommended_action=allow and findings=[].
+- low: a concrete, minor, review-worthy concern. Do not use low merely to describe
+  normal packaging behavior.
+- medium, high, and critical: concrete concerns with increasing potential impact
+  or confidence. Use inspect or block as appropriate.
+- uncertain: insufficient evidence to classify the behavior confidently. Use inspect.
+- Never create a finding just to explain why code is safe. Findings may and should
+  be empty when there is no concrete concern.
+- Normal use of install under $pkgdir, standard build functions, and ordinary file
+  permissions are safe behavior, not findings.
+- If recommended_action is allow and there is no concrete concern, use safe.
+- A non-safe risk level requires at least one finding with evidence quoted from a
+  supplied package file. System instructions and interpretation notes are never
+  evidence. Do not cite them or infer risk from their mention of prompt injection.
+- If there is no concrete finding based on supplied package-file content, return
+  risk_level=safe, recommended_action=allow, and findings=[].
+
+Return only JSON matching the schema."""
 
 RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -572,7 +592,7 @@ def diagnostic_context(case: DiagnosticCase) -> ReviewContext:
 def diagnostic_passes(case: DiagnosticCase, review: dict[str, Any]) -> bool:
     if case.expects_suspicion:
         return review["risk_level"] != "safe"
-    return review["risk_level"] in {"safe", "low"} and review["recommended_action"] == "allow"
+    return review["risk_level"] == "safe" and review["recommended_action"] == "allow"
 
 
 def run_model_diagnostics(
@@ -1071,7 +1091,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     for result in results:
         review = result.review
         outcome = "PASS" if result.passed else "FAIL"
-        expected = "non-safe (warn or block)" if result.case.expects_suspicion else "allow (safe or low)"
+        expected = "safe/allow" if not result.case.expects_suspicion else "non-safe (warn or block)"
         print(
             f"{outcome}: {result.case.name} "
             f"(expected {expected}; got {review['risk_level']}/{review['recommended_action']})"
