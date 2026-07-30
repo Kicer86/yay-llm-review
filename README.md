@@ -60,6 +60,34 @@ Manual test against an existing AUR checkout:
 yay-llm-review scan ~/.cache/yay/some-package
 ```
 
+## Test the configured model
+
+Use the built-in diagnostic suite to verify that the configured llama.cpp server
+is reachable, returns a valid review, and recognizes a safe recipe as well as
+several suspicious `PKGBUILD` patterns:
+
+```sh
+yay-llm-review test
+```
+
+Add `--verbose` to print the model's confidence and all findings for each
+scenario:
+
+```sh
+yay-llm-review test --verbose
+```
+
+The suite sends one benign recipe and three intentionally suspicious recipes
+(download-and-execute, disabled checksums, and credential access). A scenario
+passes only when the benign recipe is allowed with a `safe` or `low` risk level,
+or when a suspicious recipe is returned as non-safe. This matches the hook,
+which warns or blocks on every non-safe risk level regardless of the model's
+recommended action. The command reports each scenario before it sends the
+request and shows a spinner while waiting when progress indication is enabled.
+It exits with `0` only if every scenario passes, `1` if the model's
+classifications do not meet those expectations, and `30` if the server cannot
+be contacted or returns an invalid response. It does not use the review cache.
+
 Exit statuses are `0` for allow, `10` for warning, `20` for block and `30` for
 scanner failure.
 

@@ -3,7 +3,7 @@
 yay-llm-review \- LLM-assisted AUR recipe review companion for yay
 .SH SYNOPSIS
 .B yay-llm-review
-.IR init | deinit | status
+.IR init | deinit | status | test
 .br
 .B yay-llm-review scan
 .RI [ options ] " package-directory"
@@ -24,6 +24,21 @@ Remove the managed loader block while retaining the user configuration.
 .TP
 .B status
 Show effective paths and basic configuration.
+.TP
+.B test
+Test the configured llama.cpp server with built-in AUR recipe scenarios. It
+checks that the server returns a valid review, allows one benign recipe with a
+safe or low risk level, and flags three suspicious recipes: download-and-execute,
+disabled checksums, and credential access. It reports each scenario before
+sending the request. A suspicious scenario passes for any non-safe risk level,
+because the hook warns or blocks on non-safe results regardless of the model's
+recommended action. Reviews are sent directly to the server and do not use the
+cache. The command exits with 0 when every scenario passes, 1 when a model
+classification does not meet the expected result, or 30 when the server cannot
+be contacted or returns an invalid response.
+.TP
+.B test --verbose
+Also print the model confidence and all findings for each scenario.
 .TP
 .B scan
 Manually review an AUR checkout. Use --package-base NAME to override its name

