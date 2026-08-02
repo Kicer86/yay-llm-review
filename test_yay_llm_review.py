@@ -114,14 +114,19 @@ class ReviewTests(unittest.TestCase):
 
     def test_init_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            env = dict(os.environ)
-            env["XDG_CONFIG_HOME"] = str(Path(directory) / "config")
-            env["XDG_CACHE_HOME"] = str(Path(directory) / "cache")
-            subprocess.run([str(SCRIPT), "init"], check=True, env=env, stdout=subprocess.PIPE, text=True)
-            subprocess.run([str(SCRIPT), "init"], check=True, env=env, stdout=subprocess.PIPE, text=True)
-            init_lua = Path(env["XDG_CONFIG_HOME"]) / "yay" / "init.lua"
-            content = init_lua.read_text(encoding="utf-8")
-            self.assertEqual(content.count(module.MANAGED_BEGIN), 1)
+            config_home = Path(directory) / "config"
+            hook_source = Path(directory) / "hook.lua"
+            hook_source.write_text("-- test hook\n", encoding="utf-8")
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(config_home)}):
+                with patch.object(module, "HOOK_PATH", hook_source):
+                    self.assertEqual(module.cmd_init(object()), 0)
+                    self.assertEqual(module.cmd_init(object()), 0)
+
+            init_lua = config_home / "yay" / "init.lua"
+            hook_module = config_home / "yay" / "hooks" / "yay_llm_review.lua"
+            self.assertEqual(init_lua.read_text(encoding="utf-8"), 'require("hooks.yay_llm_review")\n')
+            self.assertTrue(hook_module.is_symlink())
+            self.assertEqual(hook_module.readlink(), hook_source)
 
     def test_model_diagnostics_check_benign_and_suspicious_recipes(self) -> None:
         config = module.merge_config({"model": "test-model"})

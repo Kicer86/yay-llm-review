@@ -36,8 +36,14 @@ This creates:
 
 ```text
 ~/.config/yay/init.lua
+~/.config/yay/hooks/yay_llm_review.lua
 ~/.config/yay-llm-review/config.toml
 ```
+
+The yay configuration loads the hook using
+`require("hooks.yay_llm_review")`. The hook module is a symlink to the copy
+installed under `/usr/share/yay-llm-review`, so package updates apply without
+rewriting your yay configuration.
 
 The generated configuration contains `enabled = false`. Edit it, set the
 llama.cpp endpoint and model, then enable it:

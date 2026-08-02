@@ -29,10 +29,10 @@ PROMPT_VERSION = 4
 RISK_ORDER = {"safe": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 VALID_RISKS = set(RISK_ORDER) | {"uncertain"}
 VALID_ACTIONS = {"allow", "inspect", "block"}
-MANAGED_BEGIN = "-- BEGIN yay-llm-review (managed)"
-MANAGED_END = "-- END yay-llm-review (managed)"
 HOOK_PATH = Path("/usr/share/yay-llm-review/hook.lua")
 EXAMPLE_CONFIG_PATH = Path("/usr/share/yay-llm-review/config.example.toml")
+HOOK_MODULE = "hooks.yay_llm_review"
+HOOK_REQUIRE = f'require("{HOOK_MODULE}")'
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
@@ -229,6 +229,10 @@ def config_path() -> Path:
 
 def yay_init_path() -> Path:
     return xdg_config_home() / "yay" / "init.lua"
+
+
+def yay_hook_path() -> Path:
+    return xdg_config_home() / "yay" / "hooks" / "yay_llm_review.lua"
 
 
 def cache_dir() -> Path:
@@ -939,18 +943,6 @@ def write_result(path: Path, status: str) -> None:
     atomic_write_text(path, status + "\n", mode=0o600)
 
 
-def managed_lua_block() -> str:
-    return f"""{MANAGED_BEGIN}
-local yay_llm_review_hook = \"{HOOK_PATH}\"
-local yay_llm_review_file = io.open(yay_llm_review_hook, \"r\")
-if yay_llm_review_file then
-    yay_llm_review_file:close()
-    dofile(yay_llm_review_hook)
-end
-{MANAGED_END}
-"""
-
-
 def default_config_text() -> str:
     if EXAMPLE_CONFIG_PATH.exists():
         return EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
@@ -960,13 +952,35 @@ model = \"\"
 """
 
 
-def remove_managed_block(content: str) -> str:
-    pattern = re.compile(
-        rf"\n?{re.escape(MANAGED_BEGIN)}.*?{re.escape(MANAGED_END)}\n?",
-        re.S,
-    )
-    cleaned = pattern.sub("\n", content)
-    return cleaned.rstrip() + ("\n" if cleaned.strip() else "")
+def install_hook_module() -> Path:
+    if not HOOK_PATH.is_file():
+        raise ReviewError(f"hook file is missing: {HOOK_PATH}")
+
+    path = yay_hook_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        if path.readlink() == HOOK_PATH:
+            return path
+        raise ReviewError(f"refusing to replace hook symlink: {path}")
+    if path.exists():
+        raise ReviewError(f"refusing to replace existing hook module: {path}")
+
+    path.symlink_to(HOOK_PATH)
+    return path
+
+
+def add_hook_require(content: str) -> str:
+    if HOOK_REQUIRE in content.splitlines():
+        return content
+    if not content:
+        return HOOK_REQUIRE + "\n"
+    return HOOK_REQUIRE + "\n\n" + content
+
+
+def remove_hook_require(content: str) -> str:
+    lines = [line for line in content.splitlines() if line != HOOK_REQUIRE]
+    cleaned = "\n".join(lines).strip()
+    return cleaned + ("\n" if cleaned else "")
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -978,14 +992,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     else:
         print(f"Kept existing {cfg_path}")
 
+    hook_path = install_hook_module()
+    print(f"Installed hook module at {hook_path}")
+
     existing = init_path.read_text(encoding="utf-8") if init_path.exists() else ""
-    cleaned = remove_managed_block(existing)
-    if cleaned and not cleaned.endswith("\n"):
-        cleaned += "\n"
-    new_content = cleaned + ("\n" if cleaned else "") + managed_lua_block()
+    new_content = add_hook_require(existing)
     init_mode = stat.S_IMODE(init_path.stat().st_mode) if init_path.exists() else 0o600
     atomic_write_text(init_path, new_content, mode=init_mode)
-    print(f"Installed loader in {init_path}")
+    print(f"Added {HOOK_REQUIRE} to {init_path}")
     print("The review remains disabled until enabled=true and model are set in the config.")
     return 0
 
@@ -996,12 +1010,12 @@ def cmd_deinit(args: argparse.Namespace) -> int:
         print(f"No {path}")
         return 0
     existing = path.read_text(encoding="utf-8")
-    cleaned = remove_managed_block(existing)
+    cleaned = remove_hook_require(existing)
     if cleaned == existing:
-        print(f"No managed loader found in {path}")
+        print(f"No {HOOK_REQUIRE} found in {path}")
         return 0
     atomic_write_text(path, cleaned, mode=stat.S_IMODE(path.stat().st_mode))
-    print(f"Removed managed loader from {path}; configuration was kept.")
+    print(f"Removed {HOOK_REQUIRE} from {path}; configuration was kept.")
     return 0
 
 
