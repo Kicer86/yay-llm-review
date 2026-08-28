@@ -67,6 +67,18 @@ class ReviewTests(unittest.TestCase):
         )
         self.assertIsNone(module.response_finish_reason({"choices": [{}]}))
 
+    def test_length_limited_empty_response_has_context_suggestion(self) -> None:
+        error = module.ReviewError(
+            "model did not return a JSON object (0 characters; response starts '') "
+            "(server finish_reason='length')"
+        )
+        suggestions = module.error_suggestions(error)
+        self.assertEqual(len(suggestions), 1)
+        self.assertIn("--ctx-size", suggestions[0])
+
+    def test_unknown_error_has_no_suggestions(self) -> None:
+        self.assertEqual(module.error_suggestions(module.ReviewError("unexpected failure")), ())
+
     def test_system_prompt_defines_safe_and_low_risk_levels(self) -> None:
         self.assertIn("safe: no concrete suspicious behavior", module.SYSTEM_PROMPT)
         self.assertIn("low: a concrete, minor, review-worthy concern", module.SYSTEM_PROMPT)
@@ -127,6 +139,14 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(init_lua.read_text(encoding="utf-8"), 'require("hooks.yay_llm_review")\n')
             self.assertTrue(hook_module.is_symlink())
             self.assertEqual(hook_module.readlink(), hook_source)
+
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(config_home)}):
+                with patch.object(module, "HOOK_PATH", hook_source):
+                    self.assertEqual(module.cmd_deinit(object()), 0)
+
+            self.assertEqual(init_lua.read_text(encoding="utf-8"), "")
+            self.assertFalse(hook_module.exists())
+            self.assertFalse(hook_module.is_symlink())
 
     def test_model_diagnostics_check_benign_and_suspicious_recipes(self) -> None:
         config = module.merge_config({"model": "test-model"})

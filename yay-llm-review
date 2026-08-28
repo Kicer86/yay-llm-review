@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 PROGRAM = "yay-llm-review"
 VERSION = "0.1.1"
@@ -139,6 +139,53 @@ RESPONSE_SCHEMA: dict[str, Any] = {
 
 class ReviewError(RuntimeError):
     pass
+
+
+@dataclasses.dataclass(frozen=True)
+class ErrorSuggestion:
+    """A user-facing remedy for a recognizable model or transport failure."""
+
+    matches: Callable[[str], bool]
+    message: str
+
+
+def has_length_limited_empty_response(error: str) -> bool:
+    return (
+        "model did not return a JSON object (0 characters" in error
+        and "server finish_reason='length'" in error
+    )
+
+
+ERROR_SUGGESTIONS: tuple[ErrorSuggestion, ...] = (
+    ErrorSuggestion(
+        matches=has_length_limited_empty_response,
+        message=(
+            "The server stopped at its length limit before generating JSON. "
+            "The prompt likely fills the llama.cpp context window; restart llama-server "
+            "with a larger --ctx-size (for example 16384), or reduce max_total_chars and "
+            "max_diff_chars in the configuration."
+        ),
+    ),
+    ErrorSuggestion(
+        matches=lambda error: error.startswith("cannot contact LLM server:"),
+        message=(
+            "Check that llama-server is running and that endpoint points to its "
+            "OpenAI-compatible /v1 endpoint."
+        ),
+    ),
+    ErrorSuggestion(
+        matches=lambda error: "LLM server returned HTTP 401" in error
+        or "LLM server returned HTTP 403" in error,
+        message="Check api_key_env and any authentication headers in the configuration.",
+    ),
+)
+
+
+def error_suggestions(error: BaseException) -> tuple[str, ...]:
+    """Return all remedies that apply to an error; rules can be extended independently."""
+
+    error_text = str(error)
+    return tuple(suggestion.message for suggestion in ERROR_SUGGESTIONS if suggestion.matches(error_text))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -983,6 +1030,14 @@ def remove_hook_require(content: str) -> str:
     return cleaned + ("\n" if cleaned else "")
 
 
+def remove_hook_module() -> bool:
+    path = yay_hook_path()
+    if not path.is_symlink() or path.readlink() != HOOK_PATH:
+        return False
+    path.unlink()
+    return True
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     cfg_path = config_path()
     init_path = yay_init_path()
@@ -1006,16 +1061,21 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_deinit(args: argparse.Namespace) -> int:
     path = yay_init_path()
-    if not path.exists():
-        print(f"No {path}")
-        return 0
-    existing = path.read_text(encoding="utf-8")
-    cleaned = remove_hook_require(existing)
-    if cleaned == existing:
-        print(f"No {HOOK_REQUIRE} found in {path}")
-        return 0
-    atomic_write_text(path, cleaned, mode=stat.S_IMODE(path.stat().st_mode))
-    print(f"Removed {HOOK_REQUIRE} from {path}; configuration was kept.")
+    removed_loader = False
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        cleaned = remove_hook_require(existing)
+        if cleaned != existing:
+            atomic_write_text(path, cleaned, mode=stat.S_IMODE(path.stat().st_mode))
+            removed_loader = True
+
+    removed_hook = remove_hook_module()
+    if removed_loader:
+        print(f"Removed {HOOK_REQUIRE} from {path}; configuration was kept.")
+    if removed_hook:
+        print(f"Removed hook module at {yay_hook_path()}")
+    if not removed_loader and not removed_hook:
+        print("No yay-llm-review integration found.")
     return 0
 
 
@@ -1051,6 +1111,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
         status = "BLOCK" if config["on_error"] == "block" else "WARN"
         print(f"\n[{PROGRAM}] {args.package_base}: {status} (scanner error)", file=sys.stderr)
         print(f"  {error}", file=sys.stderr)
+        for suggestion in error_suggestions(error):
+            print(f"  Suggestion: {suggestion}", file=sys.stderr)
         write_result(result_path, status)
         return 20 if status == "BLOCK" else 10
     write_result(result_path, status)
