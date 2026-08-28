@@ -160,10 +160,11 @@ ERROR_SUGGESTIONS: tuple[ErrorSuggestion, ...] = (
     ErrorSuggestion(
         matches=has_length_limited_empty_response,
         message=(
-            "The server stopped at its length limit before generating JSON. "
-            "The prompt likely fills the llama.cpp context window; restart llama-server "
-            "with a larger --ctx-size (for example 16384), or reduce max_total_chars and "
-            "max_diff_chars in the configuration."
+            "The server reached its generation limit before returning final JSON. Check the "
+            "reported usage: if the prompt is near --ctx-size, increase the context window or "
+            "reduce max_total_chars and max_diff_chars. Otherwise, a reasoning model may have "
+            "spent max_tokens on internal reasoning; increase max_tokens or disable thinking in "
+            "the model/server configuration."
         ),
     ),
     ErrorSuggestion(
@@ -803,6 +804,30 @@ def response_finish_reason(response: dict[str, Any]) -> str | None:
     return finish_reason if isinstance(finish_reason, str) else None
 
 
+def response_diagnostics(response: dict[str, Any]) -> str | None:
+    """Summarize optional OpenAI-compatible response metadata for failure messages."""
+
+    details: list[str] = []
+    usage = response.get("usage")
+    if isinstance(usage, dict):
+        token_counts = []
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                token_counts.append(f"{key}={value}")
+        if token_counts:
+            details.append("usage: " + ", ".join(token_counts))
+    try:
+        message = response["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        message = None
+    if isinstance(message, dict):
+        reasoning = message.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            details.append(f"reasoning_content={len(reasoning)} characters")
+    return "; ".join(details) or None
+
+
 def parse_json_content(content: str) -> dict[str, Any]:
     text = content.strip()
     if text.startswith("```"):
@@ -916,8 +941,14 @@ def call_model(context: ReviewContext, config: dict[str, Any]) -> dict[str, Any]
         return validate_review(parse_json_content(content))
     except ReviewError as error:
         finish_reason = response_finish_reason(response_json)
+        diagnostics = response_diagnostics(response_json)
+        metadata: list[str] = []
         if finish_reason is not None:
-            raise ReviewError(f"{error} (server finish_reason={finish_reason!r})") from error
+            metadata.append(f"server finish_reason={finish_reason!r}")
+        if diagnostics is not None:
+            metadata.append(diagnostics)
+        if metadata:
+            raise ReviewError(f"{error} ({'; '.join(metadata)})") from error
         raise
 
 

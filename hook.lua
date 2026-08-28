@@ -19,8 +19,9 @@ yay.create_autocmd("AURPreInstall", {
     desc = "review AUR package files with a configured llama.cpp model",
     callback = function(event)
         local result_path = os.tmpname()
+        local review_command = os.getenv("YAY_LLM_REVIEW_COMMAND") or "/usr/bin/yay-llm-review"
         local command = table.concat({
-            "/usr/bin/yay-llm-review hook",
+            shell_quote(review_command), "hook",
             "--package-base", shell_quote(event.match),
             "--package-dir", shell_quote(event.data.dir),
             "--result-file", shell_quote(result_path),

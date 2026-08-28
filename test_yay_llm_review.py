@@ -74,7 +74,17 @@ class ReviewTests(unittest.TestCase):
         )
         suggestions = module.error_suggestions(error)
         self.assertEqual(len(suggestions), 1)
+        self.assertIn("max_tokens", suggestions[0])
         self.assertIn("--ctx-size", suggestions[0])
+
+    def test_response_diagnostics_reports_usage_and_reasoning(self) -> None:
+        response = {
+            "usage": {"prompt_tokens": 1200, "completion_tokens": 4096, "total_tokens": 5296},
+            "choices": [{"message": {"reasoning_content": "thought"}}],
+        }
+        diagnostics = module.response_diagnostics(response)
+        self.assertIn("completion_tokens=4096", diagnostics)
+        self.assertIn("reasoning_content=7 characters", diagnostics)
 
     def test_unknown_error_has_no_suggestions(self) -> None:
         self.assertEqual(module.error_suggestions(module.ReviewError("unexpected failure")), ())

@@ -66,6 +66,32 @@ Manual test against an existing AUR checkout:
 yay-llm-review scan ~/.cache/yay/some-package
 ```
 
+## Development from a checkout
+
+Most changes can be tested without installing a package or invoking `yay`:
+
+```sh
+cd /path/to/yay-llm-review
+./yay-llm-review scan ~/.cache/yay/jdownloader2
+```
+
+To test the full `AURPreInstall` path against the source tree, temporarily point
+the configured hook at the checkout and override the executable for one `yay`
+invocation:
+
+```sh
+repo_dir=$(pwd -P)
+ln -sfn "$repo_dir/hook.lua" ~/.config/yay/hooks/yay_llm_review.lua
+YAY_LLM_REVIEW_COMMAND="$repo_dir/yay-llm-review" yay -S some-aur-package
+```
+
+`YAY_LLM_REVIEW_COMMAND` is used only when set; installed use continues to run
+`/usr/bin/yay-llm-review`. Restore the packaged hook after testing:
+
+```sh
+ln -sfn /usr/share/yay-llm-review/hook.lua ~/.config/yay/hooks/yay_llm_review.lua
+```
+
 ## Test the configured model
 
 Use the built-in diagnostic suite to verify that the configured llama.cpp server
